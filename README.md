@@ -2,6 +2,8 @@
 
 Convert Obsidian markdown notes (including images) to trilium supported import zip file.
 
+*Now supports CherryTree HTML notes!*
+
 ## System Requirements
 
 - Python 3.10 minimum.
@@ -13,6 +15,9 @@ Convert Obsidian markdown notes (including images) to trilium supported import z
 python obsidian2trilium.py ~/notes/Software
 # Specify a custom output path.
 python obsidian2trilium.py ~/notes/Software --output-path ./output.zip
+
+# To convert CherryTree HTML notes to a structured zip archive
+python obsidian2trilium.py ~/notes/Software --app cherrytree
 ```
 
 ## How it works?

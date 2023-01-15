@@ -13,11 +13,37 @@ import zipfile
 def main(argv: list[str]) -> int:
     args = parse_args(argv)
     tmpdir = Path(tempfile.mkdtemp())
-    zippath = package_md_notes(
-        start_path=args.path,
-        tmpdir=tmpdir,
-        max_zipper_threads=args.max_zipper_threads,
-    )
+
+    if args.app == "obsidian":
+        zippath = package_notes(
+            start_path=args.path,
+            tmpdir=tmpdir,
+            max_zipper_threads=args.max_zipper_threads,
+            note_glob="**/*.md",
+            img_glob="**/*.png",
+            img_regex=re.compile(r"!\[\[([a-zA-Z0-9 \.]+)\]\]", flags=re.M),
+            img_key_txt="{name}",
+            bs64_to_repl="![[{imglink}]]",
+            bs64_repl="\n\n\n![](data:image/png;base64,{imgb64})\n\n\n",
+        )
+    elif args.app == "cherrytree":
+        # CherryTree folder path must include the images in the first level.
+        zippath = package_notes(
+            start_path=args.path,
+            tmpdir=tmpdir,
+            max_zipper_threads=args.max_zipper_threads,
+            note_glob="**/*.html",
+            img_glob="images/*.png",
+            img_regex=re.compile(r'src="(images\/[a-zA-Z0-9-\.]+\.png)"', flags=re.M),
+            img_key_txt="images/{name}",
+            bs64_to_repl="{imglink}",
+            bs64_repl="data:image/png;base64,{imgb64}",
+        )
+
+    else:
+        print(f"Unsupported app {args.app}", file=sys.stderr)
+        return 1
+
     if args.output_path:
         output_path = Path(args.output_path).expanduser().resolve()
     else:
@@ -46,13 +72,27 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument(
         "--output-path", "-o", help="Destination path of the zipped notes."
     )
+    parser.add_argument(
+        "--app",
+        default="obsidian",
+        choices=("obsidian", "cherrytree"),
+        type=str.lower,
+        help="Note taking app.",
+    )
     return parser.parse_args(argv)
 
 
-def package_md_notes(
-    start_path: Path, tmpdir: Path, max_zipper_threads: int = 10
+def package_notes(
+    start_path: Path,
+    tmpdir: Path,
+    note_glob: str,
+    bs64_repl: str,
+    bs64_to_repl: str,
+    img_regex: re.Pattern,
+    img_key_txt: str,
+    img_glob: str,
+    max_zipper_threads: int = 10,
 ) -> Path:
-    img_regex = re.compile(r"!\[\[([a-zA-Z0-9 \.]+)\]\]", flags=re.M)
     basepath = tmpdir / start_path.name
     zippath = tmpdir / f"{start_path.name}.zip"
     file_queue = Queue()
@@ -69,13 +109,17 @@ def package_md_notes(
         zip_threads.append(t)
 
     def enqueue_file(p: Path) -> None:
-        file_queue.put((p, p.relative_to(tmpdir)))
+        arcname = str(p.relative_to(tmpdir)).replace("--", "/")
+        file_queue.put((p, arcname))
 
     img_b64_dict: dict[str, str] = dict(
-        (p.name, base64.b64encode(p.read_bytes()).decode("utf-8"))
-        for p in start_path.rglob("**/*.png")
+        (
+            img_key_txt.format(name=p.name),
+            base64.b64encode(p.read_bytes()).decode("utf-8"),
+        )
+        for p in start_path.rglob(img_glob)
     )
-    for srcpath in start_path.rglob("**/*.md"):
+    for srcpath in start_path.rglob(note_glob):
         dstpath = basepath / srcpath.relative_to(start_path)
         dstpath.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(srcpath, dstpath)
@@ -93,8 +137,8 @@ def package_md_notes(
 
             # Newlines on both sides will prevent inline images and
             # trilium will interpret multiple newlines as one.
-            repl = f"\n\n\n![{srcpath.stem}](data:image/png;base64,{imgb64})\n\n\n"
-            origtext = origtext.replace(f"![[{imglink}]]", repl)
+            repl = bs64_repl.format(imgb64=imgb64)
+            origtext = origtext.replace(bs64_to_repl.format(imglink=imglink), repl)
 
         dstpath.write_text(origtext)
         enqueue_file(dstpath)
